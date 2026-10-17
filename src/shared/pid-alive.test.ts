@@ -161,6 +161,22 @@ describe("isPidDefinitelyDead", () => {
   });
 });
 
+describe("Linux process ownership", () => {
+  it("rejects a PID reused by a worker thread without rejecting its live leader", async () => {
+    vi.spyOn(process, "kill").mockImplementation(() => true);
+    mockProcReads({
+      "/proc/42/status": "Name:\tnode\nState:\tS (sleeping)\nTgid:\t42\nPid:\t42\n",
+      "/proc/43/status": "Name:\tlibuv-worker\nState:\tS (sleeping)\nTgid:\t42\nPid:\t43\n",
+    });
+    await withMockedPlatform("linux", async () => {
+      expect(isPidAlive(42)).toBe(true);
+      expect(isPidDefinitelyDead(42)).toBe(false);
+      expect(isPidAlive(43)).toBe(false);
+      expect(isPidDefinitelyDead(43)).toBe(true);
+    });
+  });
+});
+
 describe("process start times", () => {
   it("parses linux /proc stat start times and rejects malformed variants", async () => {
     const fakeStatPrefix = "42 (node) S 1 42 42 0 -1 4194304 12345 0 0 0 100 50 0 0 20 0 8 0 ";

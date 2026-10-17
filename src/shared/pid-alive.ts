@@ -9,23 +9,27 @@ function isValidPid(pid: number): boolean {
 }
 
 /**
- * Check if a process is a zombie on Linux by reading /proc/<pid>/status.
+ * Check if a Linux process owner exited or its PID was reused by a worker thread.
  * Returns false on non-Linux platforms or if the proc file can't be read.
  */
-function isZombieProcess(pid: number): boolean {
+function isExitedProcessOwner(pid: number): boolean {
   if (process.platform !== "linux") {
     return false;
   }
   try {
     const status = fsSync.readFileSync(`/proc/${pid}/status`, "utf8");
     const stateMatch = status.match(/^State:\s+(\S)/m);
-    return stateMatch?.[1] === "Z";
+    const threadGroupMatch = status.match(/^Tgid:\s+(\d+)/m);
+    return (
+      stateMatch?.[1] === "Z" ||
+      (threadGroupMatch !== null && Number(threadGroupMatch[1]) !== pid)
+    );
   } catch {
     return false;
   }
 }
 
-/** Returns true only when a positive PID exists and is not a Linux zombie process. */
+/** Returns true only when a positive PID exists and is not an exited Linux process owner. */
 export function isPidAlive(pid: number): boolean {
   if (!isValidPid(pid)) {
     return false;
@@ -34,16 +38,16 @@ export function isPidAlive(pid: number): boolean {
     process.kill(pid, 0);
   } catch (err) {
     // EPERM means the PID exists but we cannot signal it. Treat that as a
-    // successful existence probe, then still apply the Linux zombie check.
+    // successful existence probe, then still check Linux process ownership.
     // Keep parity with isPidDefinitelyDead (EPERM is not "definitely dead").
     if ((err as NodeJS.ErrnoException).code !== "EPERM") {
       return false;
     }
   }
-  return !isZombieProcess(pid);
+  return !isExitedProcessOwner(pid);
 }
 
-/** Returns true only when the PID is invalid, missing, or known to be a Linux zombie. */
+/** Returns true only when the PID is invalid, missing, a Linux zombie, or reused by a worker thread. */
 export function isPidDefinitelyDead(pid: number): boolean {
   if (!isValidPid(pid)) {
     return true;
@@ -53,7 +57,7 @@ export function isPidDefinitelyDead(pid: number): boolean {
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "ESRCH";
   }
-  return isZombieProcess(pid);
+  return isExitedProcessOwner(pid);
 }
 
 function getPlatformProcessStartTime(pid: number): number | null {
